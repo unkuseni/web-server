@@ -3,16 +3,20 @@ use std::thread;
 
 // Define a struct for the thread pool
 pub struct ThreadPool {
-    workers: Vec<Worker>, // Collection of worker threads
-    sender: mpsc::Sender<Job>, // Channel sender for sending jobs to workers
+    workers: Vec<Worker>,          // Collection of worker threads
+    sender: mpsc::Sender<Message>, // Channel sender for sending jobs to workers
 }
 
 // Define a struct for the worker thread
 struct Worker {
-    id: usize, // Worker ID
-    thread: thread::JoinHandle<()>, // Handle to the worker thread
+    id: usize,                              // Worker ID
+    thread: Option<thread::JoinHandle<()>>, // Handle to the worker thread
 }
 
+enum Message {
+    NewJob(Job),
+    Terminate,
+}
 // Define a trait for a boxed closure (function)
 trait FnBox {
     fn call_box(self: Box<Self>);
@@ -58,24 +62,53 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.send(Message::NewJob(job)).unwrap();
     }
 }
 
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        println!("Sending terminate message to all workers.");
+        for _ in &mut self.workers {
+            self.sender.send(Message::Terminate).unwrap();
+        }
+        println!("Shutting down all workers.");
+        for worker in &mut self.workers {
+            println!("Shutting down Worker {}", worker.id);
+
+            if let Some(thread) = worker.thread.take() {
+                thread.join().unwrap();
+            }
+        }
+    }
+}
 // Implement methods for the Worker struct
 impl Worker {
     // Create a new worker thread
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
-        let thread = thread::spawn(move || loop {
-            // Lock the receiver to receive a job
-            let job = receiver.lock().unwrap().recv().unwrap();
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
+        let thread = thread::spawn(move || {
+            loop {
+                // Lock the receiver to receive a job
+                let message = receiver.lock().unwrap().recv().unwrap();
+                match message {
+                    Message::NewJob(job) => {
+                        // Print a message and execute the job
+                        println!("Worker {} got a job; executing.", id);
+                        job.call_box();
+                    }
+                    Message::Terminate => {
+                        println!("Worker {} was told to terminate.", id);
 
-            // Print a message and execute the job
-            println!("Worker {} got a job; executing.", id);
-            job.call_box();
+                        break;
+                    }
+                }
+            }
         });
 
         // Return the worker with the ID and thread handle
-        Worker { id, thread }
+        Worker {
+            id,
+            thread: Some(thread),
+        }
     }
 }

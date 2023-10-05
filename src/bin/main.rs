@@ -6,9 +6,9 @@ use web_server::ThreadPool;
 fn main() {
     // Bind the TCP listener to the specified address
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
-let pool = ThreadPool::new(4);
+    let pool = ThreadPool::new(4);
     // Start an infinite loop to handle incoming connections
-    for stream in listener.incoming() {
+    for stream in listener.incoming().take(10) {
         // Unwrap the incoming stream
         let stream = stream.unwrap();
 
@@ -17,6 +17,7 @@ let pool = ThreadPool::new(4);
             handle_connection(stream);
         });
     }
+    println!("Shutting down.");
 }
 
 // Function to handle the incoming TCP stream
